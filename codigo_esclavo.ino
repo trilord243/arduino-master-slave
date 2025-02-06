@@ -1,59 +1,73 @@
-#include <esp_now.h>
 #include <WiFi.h>
+#include <WebServer.h>
 
-#define LED_PIN 4 ///< Pin donde está conectado el LED
+#define RELAY_PIN 4
 
-bool estadoBoton = false; ///< Estado actual del botón
+// Datos de red WiFi
+const char* ssid = "cuarto_apa";
+const char* password = "agfaer0201";
 
-typedef struct struct_message {
-  bool estadoBoton;
-} struct_message;
+// IP fija para el Esclavo
+IPAddress ip(192, 168, 1, 7);  
+IPAddress gateway(192, 168, 1, 1);
+IPAddress subnet(255, 255, 255, 0);
 
-struct_message datosRecibidos; ///< Variable para almacenar los datos recibidos
+// Servidor web en el puerto 80
+WebServer server(80);
+bool reléCerrado = false;
 
-// Callback para recibir datos de ESP-NOW
-void OnDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
-  Serial.println("📡 Datos recibidos!");
+// 🔹 Función para activar el relé
+void activarRele() {
+  Serial.println("📡 Señal recibida: Activando relé...");
+  digitalWrite(RELAY_PIN, HIGH);
+  delay(5000);
+  digitalWrite(RELAY_PIN, LOW);
+  Serial.println("🔒 Relé desactivado.");
+  
+  reléCerrado = true;
+  server.send(200, "text/plain", "Relé activado.");
+}
 
-  // Mostrar la MAC del remitente (opcional, para depuración)
-  Serial.print("🔎 MAC del remitente: ");
-  for (int i = 0; i < 6; i++) {
-    Serial.printf("%02X", info->src_addr[i]);
-    if (i < 5) Serial.print(":");
-  }
-  Serial.println();
-
-  // Procesar los datos recibidos
-  memcpy(&datosRecibidos, data, sizeof(datosRecibidos));
-  estadoBoton = datosRecibidos.estadoBoton;
-
-  Serial.print("🔄 Estado recibido: ");
-  Serial.println(estadoBoton);
-
-  if (estadoBoton) {
-    digitalWrite(LED_PIN, HIGH);
-    Serial.println("💡 LED ENCENDIDO");
+// 🔹 Función para confirmar cierre
+void confirmarCierre() {
+  if (reléCerrado) {
+    server.send(200, "text/plain", "cerrado");
+    Serial.println("📡 Confirmación enviada al Maestro.");
+    reléCerrado = false;
   } else {
-    digitalWrite(LED_PIN, LOW);
-    Serial.println("💡 LED APAGADO");
+    server.send(200, "text/plain", "esperando");
   }
+}
+
+// 🔹 Función para conectar a WiFi con IP fija
+void conectarWiFi() {
+  Serial.print("🌍 Conectando a WiFi...");
+  WiFi.config(ip, gateway, subnet);
+  WiFi.begin(ssid, password);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(1000);
+    Serial.print(".");
+  }
+
+  Serial.println("\n✅ Conectado a WiFi");
+  Serial.print("📡 Dirección IP fija: ");
+  Serial.println(WiFi.localIP());
 }
 
 void setup() {
   Serial.begin(115200);
-  pinMode(LED_PIN, OUTPUT);
-  WiFi.mode(WIFI_STA);
+  pinMode(RELAY_PIN, OUTPUT);
+  digitalWrite(RELAY_PIN, LOW);
 
-  if (esp_now_init() != ESP_OK) {
-    Serial.println("❌ Error al iniciar ESP-NOW. Reiniciando...");
-    delay(1000);
-    ESP.restart();
-  }
+  conectarWiFi();
 
-  esp_now_register_recv_cb(OnDataRecv); // Registra la función para recibir datos
-
-  Serial.println("📡 Esclavo listo para recibir datos...");
+  server.on("/activar", activarRele);
+  server.on("/confirmar", confirmarCierre);
+  server.begin();
+  Serial.println("📡 Servidor HTTP iniciado.");
 }
 
 void loop() {
+  server.handleClient();
 }
